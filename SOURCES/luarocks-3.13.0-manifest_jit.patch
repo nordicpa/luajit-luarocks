@@ -1,0 +1,244 @@
+--- a/src/luarocks/core/manif.lua
++++ b/src/luarocks/core/manif.lua
+@@ -57,7 +57,12 @@
+    if file:match(".*%.json$") then
+       manifest, err, errcode = persist.load_json_into_table(file)
+    else
+-      manifest, err, errcode = persist.load_into_table(file)
++      if lua_version == "5.1" and jit then
++         local manifest_jit = require("luarocks.core.manifest_jit")
++         manifest, err, errcode = manifest_jit.load(file)
++      else
++         manifest, err, errcode = persist.load_into_table(file)
++      end
+    end
+ 
+    if not manifest and type(err) == "string" then
+--- a/src/luarocks/core/manifest_jit.lua
++++ b/src/luarocks/core/manifest_jit.lua
+@@ -0,0 +1,225 @@
++local lpeg = require("lpeg")
++local persist = require("luarocks.persist")
++local P, S, R = lpeg.P, lpeg.S, lpeg.R
++local C, Cmt, Cp = lpeg.C, lpeg.Cmt, lpeg.Cp
++local manifest_jit = {}
++local identifier = R("AZ", "az") + P("_")
++local identifier_name = C(identifier * (R("AZ", "az", "09") + P("_")) ^ 0)
++local identifier_key = identifier * (R("AZ", "az", "09") + P("_")) ^ 0
++-- Lua quoted strings.
++local sq = P("'") * (P("\\") * P(1) + (1 - S("'\r\n"))) ^ 0 * P("'")
++local dq = P('"') * (P("\\") * P(1) + (1 - S('"\r\n'))) ^ 0 * P('"')
++-- Lua long strings/comments: [[...]], [=[...]=], etc.
++local long = Cmt(P("[") * C(P("=") ^ 0) * P("["), function(subject, pos, eq)
++   local close = "]" .. eq .. "]"
++   local p = subject:find(close, pos, true)
++   if not p then
++      return false
++   end
++   return p + #close
++end)
++local line_comment = P("--") * (1 - S("\r\n")) ^ 0
++local block_comment = P("--") * long
++local ignored = sq + dq + block_comment + line_comment + long
++local function matching_brace(src, pos)
++   local depth = 0
++   while pos <= #src do
++      local p = lpeg.match(ignored, src, pos)
++      if p then
++         pos = p
++      else
++         local c = src:sub(pos, pos)
++         if c == "{" then
++            depth = depth + 1
++         elseif c == "}" then
++            depth = depth - 1
++            if depth == 0 then
++               return pos
++            end
++         end
++         pos = pos + 1
++      end
++   end
++   error("unterminated table at byte " .. pos)
++end
++
++function manifest_jit.load(input)
++   local lua_file = input .. "-jit.lua"
++   local clua_file = input .. "-jit.clua"
++   local ix_file = input .. "-jit.ix.clua"
++   local manifest, globals
++   local lua_test = io.open(lua_file, "rb")
++   local clua_test = io.open(clua_file, "rb")
++   local ix_test = io.open(ix_file, "rb")
++   local generated = not lua_test or not clua_test or not ix_test
++   if lua_test then
++      lua_test:close()
++   end
++   if clua_test then
++      clua_test:close()
++   end
++   if ix_test then
++      ix_test:close()
++   end
++   if generated then
++      local f = assert(io.open(input, "rb"))
++      local src = f:read("*a")
++      f:close()
++      local index = assert(io.open(lua_file, "wb"))
++      local clua = assert(io.open(clua_file, "wb"))
++      local ix_src = "ix = {}\n"
++      local tables = {}
++      local p = 1
++      -- Locate the top-level tables.
++      local level1 = identifier_name * S(" \t\r\n") ^ 0 * P("=") * S(" \t\r\n") ^ 0 * P("{") * Cp()
++      while p < #src do
++         local name, after_open = lpeg.match((ignored + S(" \t\r\n")) ^ 0 * level1, src, p)
++         assert(name, string.format("cannot parse Level-1 table at byte %d", p))
++         local open = after_open - 1
++         tables[#tables + 1] = {
++            name = name,
++            open = open,
++            close = matching_brace(src, open),
++         }
++         p = tables[#tables].close + 1
++      end
++      assert(#tables > 0, "expected at least one top-level table")
++      -- Write Level-1 manifest tables.
++      for _, t in ipairs(tables) do
++         index:write(t.name, " = {}\n")
++      end
++      -- Write Level-1 index tables.
++      for _, t in ipairs(tables) do
++         ix_src = ix_src .. "ix." .. t.name .. " = {}\n"
++      end
++      -- Compile and append each Level-2 assignment individually.
++      for _, t in ipairs(tables) do
++         p = t.open + 1
++         while p < t.close do
++            local next_p = lpeg.match((S(" \t\r\n") + P(",")) ^ 0 * Cp(), src, p)
++            p = next_p
++            if p >= t.close then
++               break
++            end
++            local after_open = lpeg.match(
++               (P("[") * (sq + dq) * P("]") + identifier_key)
++                  * S(" \t\r\n") ^ 0
++                  * P("=")
++                  * S(" \t\r\n") ^ 0
++                  * P("{")
++                  * Cp(),
++               src,
++               p
++            )
++            assert(after_open, string.format("cannot parse Level-2 entry in %s at byte %d", t.name, p))
++            local open = after_open - 1
++            local close = matching_brace(src, open)
++            local key = src:sub(p, open - 1)
++            key = key:gsub("^%s+", "")
++            key = key:gsub("%s*=%s*$", "")
++            local assignment
++            if key:sub(1, 1) == "[" then
++               assignment = t.name .. key .. " = " .. src:sub(open, close)
++            else
++               assignment = t.name .. "." .. key .. " = " .. src:sub(open, close)
++            end
++            local chunk, err = load(assignment, "@" .. input, "t")
++            assert(chunk, err)
++            local bytecode = string.dump(chunk, true)
++            local start = clua:seek()
++            clua:write(bytecode)
++            local stop = clua:seek()
++            if key:sub(1, 1) == "[" then
++               ix_src = ix_src .. "ix." .. t.name .. key .. " = {" .. tostring(start) .. ", " .. tostring(stop) .. "}\n"
++            else
++               ix_src = ix_src
++                  .. "ix."
++                  .. t.name
++                  .. "."
++                  .. key
++                  .. " = {"
++                  .. tostring(start)
++                  .. ", "
++                  .. tostring(stop)
++                  .. "}\n"
++            end
++            p = close + 1
++         end
++      end
++      index:close()
++      clua:close()
++      local ix_chunk, err = load(ix_src, "@" .. ix_file, "t")
++      assert(ix_chunk, err)
++      local ix_bytecode = string.dump(ix_chunk, true)
++      local ix_out = assert(io.open(ix_file, "wb"))
++      ix_out:write(ix_bytecode)
++      ix_out:close()
++   end
++   manifest, globals = persist.load_into_table(lua_file)
++   if not manifest then
++      return nil, globals, "load"
++   end
++   local ix_file_handle = assert(io.open(ix_file, "rb"))
++   local ix_bytecode = ix_file_handle:read("*a")
++   ix_file_handle:close()
++   local ix_chunk, err = loadstring(ix_bytecode, "@" .. ix_file)
++   if not ix_chunk then
++      return nil, err, "load"
++   end
++   local ix_env = {}
++   setfenv(ix_chunk, ix_env)
++   local ok, run_err
++   ok, run_err = pcall(ix_chunk)
++   if not ok then
++      return nil, run_err, "run"
++   end
++   local ix = ix_env.ix
++   local clua = assert(io.open(clua_file, "rb"))
++   local function lazy_index(t, key, ix_table)
++      local range = ix_table[key]
++      if not range then
++         return nil
++      end
++      clua:seek("set", range[1])
++      local bytecode = clua:read(range[2] - range[1])
++      local chunk, load_err = loadstring(bytecode, "@" .. clua_file)
++      if not chunk then
++         error(load_err)
++      end
++      setfenv(chunk, manifest)
++      local loaded
++      loaded, run_err = pcall(chunk)
++      if not loaded then
++         error(run_err)
++      end
++      return rawget(t, key)
++   end
++   for name, ix_table in pairs(ix) do
++      setmetatable(manifest[name], {
++         __index = function(t, key)
++            return lazy_index(t, key, ix_table)
++         end,
++         __pairs = function(t)
++            -- print("PAIRS:", tostring(t), "START")
++            -- local count = 0
++            local function iter(_, key)
++               local next_key = next(ix_table, key)
++               if next_key == nil then
++                  -- print("PAIRS:", tostring(t), "DONE", count)
++                  return nil
++               end
++               -- count = count + 1
++               -- if count <= 5 or count % 500 == 0 then
++               --    print("PAIRS:", count, next_key)
++               -- end
++               local value = lazy_index(t, next_key, ix_table)
++               return next_key, value
++            end
++            return iter, nil, nil
++         end,
++      })
++   end
++   return manifest, globals
++end
++
++return manifest_jit

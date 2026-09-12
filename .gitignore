@@ -1,0 +1,22 @@
+# --- RPMBUILD DIRECTORIES ---
+/BUILD/
+/BUILDROOT/
+/RPMS/
+/SRPMS/
+
+# --- BINARIES & BUILDS ---
+*.rpm
+*.log
+typescript
+/SOURCES/luarocks-3.13.0/
+/SOURCES/a
+/SOURCES/b
+/SOURCES/*.src.rock
+
+# --- SOURCES EXCLUSIONS ---
+# Ignore all archives in SOURCES so you don't commit large tarballs/zips
+/SOURCES/*.tar.gz
+/SOURCES/*.tar.bz2
+/SOURCES/*.tar.xz
+/SOURCES/*.tgz
+/SOURCES/*.zip
