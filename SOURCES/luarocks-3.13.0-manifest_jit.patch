@@ -16,7 +16,7 @@
     if not manifest and type(err) == "string" then
 --- a/src/luarocks/core/manifest_jit.lua
 +++ b/src/luarocks/core/manifest_jit.lua
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,231 @@
 +local lpeg = require("lpeg")
 +local persist = require("luarocks.persist")
 +local P, S, R = lpeg.P, lpeg.S, lpeg.R
@@ -63,6 +63,12 @@
 +end
 +
 +function manifest_jit.load(input)
++   local source, open_err = io.open(input, "rb")
++   if not source then
++      return nil, open_err, "open"
++   end
++   source:close()
++
 +   local lua_file = input .. "-jit.lua"
 +   local clua_file = input .. "-jit.clua"
 +   local ix_file = input .. "-jit.ix.clua"

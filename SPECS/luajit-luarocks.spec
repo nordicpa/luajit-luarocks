@@ -4,7 +4,7 @@ Name:           luajit-luarocks
 %global lr_lua_id jit
 %global lr_debug 1
 Version:        3.13.0
-Release:        3.2%{?dist}
+Release:        5%{?dist}
 Summary:        A deployment and management system for Lua modules
 
 License:        MIT
@@ -24,8 +24,7 @@ Source1:        https://luarocks.org/%{lpeg_rock_file}
 # Use /usr/lib64 as default LUA_LIBDIR
 Patch0:         luarocks-3.9.1-dynamic_libdir.patch
 Patch1:         luarocks-3.13.0-configure_GNUmakefile_cfg.patch
-Patch2:         luarocks-3.13.0-config-explicit-LUA.patch
-Patch3:         luarocks-3.13.0-manifest_jit.patch
+Patch2:         luarocks-3.13.0-manifest_jit.patch
 
 BuildArch:      noarch
 # # luarocks-5.1 -has- had the same binary/folder names
@@ -75,7 +74,6 @@ repositories, and multiple local rocks trees.
   --luarocks-rocks=%{_prefix}/share/lua/%{lr_lua_id} \
   --with-lua-include=%{_includedir}/luajit-2.1 \
   --with-lua-interpreter=luajit
-
 %make_build
 
 %install
