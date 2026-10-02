@@ -1,0 +1,13 @@
+#!/bin/sh
+# ssh git "sh -xc 'cd \"${PWD##*/}.git\" && git show HEAD:hooks/_NO_post-receive > hooks/post-receive && chmod +x hooks/post-receive'"
+
+while read -r oldrev newrev refname; do
+  case "$refname" in refs/heads/*)
+    if ! git merge-base --is-ancestor "$oldrev" "$newrev"; then force=--force; fi
+    ;;
+  esac
+done
+
+echo "==> Pushing updates from backup server to GitHub..."
+git push "$force" --all git@github.com:nordicpa/luajit-luarocks
+git push "$force" --tags git@github.com:nordicpa/luajit-luarocks
