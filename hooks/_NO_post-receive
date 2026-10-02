@@ -1,0 +1,12 @@
+#!/bin/sh
+# ssh git "sh -xc 'cd \"${PWD##*/}.git\" && git show HEAD:hooks/_NO_post-receive > hooks/post-receive && chmod +x hooks/post-receive'"
+
+force='' option='' i=0
+while eval "option=\${GIT_PUSH_OPTION_$i-}"; do
+  case "$option" in force) force=--force ;; esac
+  i=$((i + 1))
+done
+
+echo "==> Pushing updates from backup server to GitHub..."
+git push $force --all git@github.com:nordicpa/luajit-luarocks
+git push $force --tags git@github.com:nordicpa/luajit-luarocks

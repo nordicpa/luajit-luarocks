@@ -8,8 +8,6 @@ PATCHES='
 luarocks-3.13.0-configure_GNUmakefile_cfg.patch	configure
 luarocks-3.13.0-configure_GNUmakefile_cfg.patch	GNUmakefile
 luarocks-3.13.0-configure_GNUmakefile_cfg.patch	src/luarocks/core/cfg.lua
-luarocks-3.13.0-search_lua-interpreter.patch	src/luarocks/cmd.lua
-luarocks-3.13.0-search_lua-interpreter.patch	src/luarocks/util.lua
 luarocks-3.13.0-manifest_jit.patch	src/luarocks/core/manif.lua
 luarocks-3.13.0-manifest_jit.patch	src/luarocks/core/manifest_jit.lua
 '
